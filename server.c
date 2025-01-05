@@ -14,17 +14,17 @@
 
 /* portul folosit */
 sqlite3 *db;
-#define PORT 8020
+#define PORT 8030
 extern int errno; /* eroarea returnata de unele apeluri */
-
-//structura pentru a retine clientii logati 
+pthread_mutex_t mutex;
+// structura pentru a retine clientii logati
 typedef struct
 {
     int user_id;
     bool logged_in;
 } ClientData;
 
-ClientData *client_data_storage[250] = { NULL };
+ClientData *client_data_storage[250] = {NULL};
 
 /* functie de convertire a adresei IP a clientului in sir de caractere */
 char *conv_addr(struct sockaddr_in address)
@@ -57,7 +57,7 @@ void initDB()
     fflush(stdout);
 }
 
-//inregistrare utilizatori
+// inregistrare utilizatori
 
 int registerUsers(const char *username, const char *password)
 {
@@ -70,7 +70,7 @@ int registerUsers(const char *username, const char *password)
     //  ID pentru stergere produse
 }
 
-// functie login 
+// functie login
 bool loginUser(const char *username, const char *password)
 {
     char sql[256];
@@ -123,35 +123,30 @@ bool addProduct(const char *name, double price, int seller_id, const char *locat
 // stergerea produselor poate fi facuta doar daca user-ul introduce si id ul propriu, doar pentru produsele sale
 bool deleteProduct(const char *name, int user_id)
 {
+    // verificam daca exista produsul specificat si daca apartine userului
     char sql_check[512];
     snprintf(sql_check, sizeof(sql_check),
              "SELECT id FROM Products WHERE name = '%s' AND seller_id = %d;", name, user_id);
     sqlite3_stmt *stmt;
 
-    int rc = sqlite3_prepare_v2(db, sql_check, -1, &stmt, NULL);
-    if (rc != SQLITE_OK)
-    {
-        printf("Eroare la verificarea produsului: %s\n", sqlite3_errmsg(db));
-        return false;
-    }
-
-    rc = sqlite3_step(stmt);
-    if (rc != SQLITE_ROW)
+    int temp = sqlite3_prepare_v2(db, sql_check, -1, &stmt, NULL);
+    temp = sqlite3_step(stmt);
+    if (temp != SQLITE_ROW)
     {
         printf("Produsul nu exista sau nu apartine utilizatorului conectat.\n");
         sqlite3_finalize(stmt);
         return false;
     }
 
-    sqlite3_finalize(stmt); 
+    sqlite3_finalize(stmt);
 
     // verifica daca produsul poate fi sters
     char sql_delete[512];
     snprintf(sql_delete, sizeof(sql_delete), "DELETE FROM Products WHERE  name =  '%s' AND seller_id = %d;", name, user_id);
     char *errMsg;
 
-    rc = sqlite3_exec(db, sql_delete, 0, 0, &errMsg);
-    if (rc != SQLITE_OK)
+    temp = sqlite3_exec(db, sql_delete, 0, 0, &errMsg);
+    if (temp != SQLITE_OK)
     {
         printf("Eroare la stergerea produsului: %s\n", errMsg);
         sqlite3_free(errMsg);
@@ -170,11 +165,6 @@ void viewProducts(int client_fd)
     sqlite3_stmt *stmt;
 
     int temp = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
-    if (temp != SQLITE_OK)
-    {
-        write(client_fd, "Eroare la interogarea produselor.\n", 34);
-        return;
-    }
 
     char buffer[4096] = {0};
     while (sqlite3_step(stmt) == SQLITE_ROW)
@@ -206,13 +196,6 @@ void viewDetails(int client_fd, const char *product)
 
     sqlite3_stmt *stmt;
     int temp = sqlite3_prepare_v2(db, query, -1, &stmt, NULL);
-    if (temp != SQLITE_OK)
-    {
-        printf("Eroare la interogarea detaliilor produsului: %s\n", sqlite3_errmsg(db));
-        write(client_fd, "Eroare la interogarea detaliilor produsului.\n", 45);
-        return;
-    }
-
     char buffer[1024] = {0};
     int found = 0;
 
@@ -239,7 +222,6 @@ void viewDetails(int client_fd, const char *product)
 }
 
 // afisarea tranzactiilor pentru un anumit user - se face pe baza id ului propriu
-
 int myTransactions(int user_id, int client_fd)
 {
     const char *sql = "SELECT T.id, T.quantity, P.name, P.price, P.location "
@@ -248,65 +230,35 @@ int myTransactions(int user_id, int client_fd)
                       "WHERE T.buyer_id = ?;";
 
     sqlite3_stmt *stmt;
-    int rc = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
-    if (rc != SQLITE_OK)
-    {
-        fprintf(stderr, "SQL error: %s\n", sqlite3_errmsg(db));
-        write(client_fd, "Eroare la interogarea produselor.\n", 34);
-        return 1;
-    }
-
+    int temp = sqlite3_prepare_v2(db, sql, -1, &stmt, NULL);
     sqlite3_bind_int(stmt, 1, user_id);
-    char *buffer = NULL;
-    size_t buffer_size = 1024;
-    buffer = (char *)malloc(buffer_size);
-    if (buffer == NULL)
-    {
-        fprintf(stderr, "Memory allocation failed!\n");
-        sqlite3_finalize(stmt);
-        return 1;
-    }
+
+    char buffer[1024];
     buffer[0] = '\0';
     char buffer2[256];
-
-    // Modify the while loop to include quantity
-    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW)
+    while ((temp = sqlite3_step(stmt)) == SQLITE_ROW)
     {
         int id = sqlite3_column_int(stmt, 0);
         int quantity = sqlite3_column_int(stmt, 1);
         const char *name = (const char *)sqlite3_column_text(stmt, 2);
         double price = sqlite3_column_double(stmt, 3);
         const char *location = (const char *)sqlite3_column_text(stmt, 4);
+        snprintf(buffer2, sizeof(buffer2), "ID: %d, Quantity: %d, Nume: %s, Pret: %.2f, Location: %s\n",
+                 id, quantity, name, price, location);
 
-        if (name == NULL)
-            name = "N/A";
-        if (location == NULL)
-            location = "N/A";
-
-        size_t required_size = snprintf(buffer2, sizeof(buffer2), "ID: %d, Quantity: %d, Nume: %s, Pret: %.2f, Location: %s\n", id, quantity, name, price, location);
-        if (strlen(buffer) + required_size + 1 > buffer_size)
+        if (strlen(buffer) + strlen(buffer2) < sizeof(buffer))
         {
-            size_t new_size = buffer_size * 2; // Double the size.
-            char *new_buffer = (char *)realloc(buffer, new_size);
-            if (new_buffer == NULL)
-            {
-                fprintf(stderr, "Memory reallocation failed!\n");
-                free(buffer);
-                sqlite3_finalize(stmt);
-                return 1;
-            }
-            buffer = new_buffer;
-            buffer_size = new_size;
+            strncat(buffer, buffer2, sizeof(buffer) - strlen(buffer) - 1);
         }
-
-        strncat(buffer, buffer2, buffer_size - strlen(buffer) - 1);
+        else
+        {
+            break;
+        }
     }
 
-    if (rc != SQLITE_DONE)
+    if (temp != SQLITE_DONE)
     {
-        fprintf(stderr, "SQL error during step: %s\n", sqlite3_errmsg(db));
         write(client_fd, "Eroare la procesarea tranzactiilor.\n", 36);
-        free(buffer);
         sqlite3_finalize(stmt);
         return 1;
     }
@@ -317,7 +269,6 @@ int myTransactions(int user_id, int client_fd)
     }
 
     write(client_fd, buffer, strlen(buffer));
-    free(buffer);
     sqlite3_finalize(stmt);
     return 0;
 }
@@ -331,20 +282,11 @@ int checkCategory(const char *category, int client_fd)
              "SELECT id, name, price, location, quantity FROM Products WHERE category = '%s';", category);
 
     sqlite3_stmt *stmt;
-    int rc = sqlite3_prepare_v2(db, sql_query, -1, &stmt, NULL);
-    if (rc != SQLITE_OK)
-    {
-        fprintf(stderr, "Error preparing query: %s\n", sqlite3_errmsg(db));
-        write(client_fd, "Error querying database.\n", 24); 
-        return 1;                                          
-    }
-
-    char buffer[4096] = {0}; 
-    char temp_buffer[256];  
-
-    snprintf(buffer, sizeof(buffer), "Products in category '%s':\n", category);
-
-    while ((rc = sqlite3_step(stmt)) == SQLITE_ROW)
+    int temp = sqlite3_prepare_v2(db, sql_query, -1, &stmt, NULL);
+    char buffer[4096] = {0};
+    char temp_buffer[256];
+    snprintf(buffer, sizeof(buffer), "Produse disponibile din categoria '%s':\n", category);
+    while ((temp= sqlite3_step(stmt)) == SQLITE_ROW)
     {
         int id = sqlite3_column_int(stmt, 0);
         const char *name = sqlite3_column_text(stmt, 1);
@@ -364,50 +306,29 @@ int checkCategory(const char *category, int client_fd)
         strncat(buffer, temp_buffer, sizeof(buffer) - strlen(buffer) - 1);
     }
 
-    if (rc != SQLITE_DONE)
+    if (strlen(buffer) == strlen("Produse disponibile din categoria '':\n"))
     {
-        fprintf(stderr, "Error executing query: %s\n", sqlite3_errmsg(db));
-        write(client_fd, "Error executing query.\n", 23); 
-        sqlite3_finalize(stmt);
-        return 1; 
-    }
-
-    if (strlen(buffer) == strlen("Products in category '':\n"))
-    { 
-        snprintf(temp_buffer, sizeof(temp_buffer), "No products found in category '%s'.\n", category);
+        snprintf(temp_buffer, sizeof(temp_buffer), "Nu au fost gasite produse in categoria '%s'.\n", category);
         strncat(buffer, temp_buffer, sizeof(buffer) - strlen(buffer) - 1);
     }
 
-    if (write(client_fd, buffer, strlen(buffer)) < 0)
-    {
-        perror("Error writing to client socket");
-        sqlite3_finalize(stmt);
-        return 1; 
-    }
-
+    write(client_fd, buffer, strlen(buffer));
     sqlite3_finalize(stmt);
-    return 0; 
+    return 0;
 }
 
-// cumparare produs si inregistrare tranzactie 
+// cumparare produs si inregistrare tranzactie
 
 int buyItem(const char *product_name, int quantity, int product_ID, int buyer_ID, int client_fd)
 {
     char sql_query[512];
 
-    //verfica disponibilitatea produsului
+    // verfica disponibilitatea produsului
 
     snprintf(sql_query, sizeof(sql_query), "SELECT id, quantity FROM Products WHERE id = %d;", product_ID);
 
     sqlite3_stmt *stmt;
-    int rc = sqlite3_prepare_v2(db, sql_query, -1, &stmt, NULL);
-    if (rc != SQLITE_OK)
-    {
-        fprintf(stderr, "Error preparing query: %s\n", sqlite3_errmsg(db));
-        write(client_fd, "Error checking product availability.\n", 34); 
-        return 1;
-    }
-
+    int temp = sqlite3_prepare_v2(db, sql_query, -1, &stmt, NULL);
     int product_db_id = -1;
     int available_quantity = -1;
     if (sqlite3_step(stmt) == SQLITE_ROW)
@@ -419,55 +340,39 @@ int buyItem(const char *product_name, int quantity, int product_ID, int buyer_ID
 
     if (product_db_id == -1 || available_quantity < quantity)
     {
-        write(client_fd, "Product not found or insufficient quantity.\n", 43); 
+        write(client_fd, "Produsul nu a fost gasit sau cantitatea este insuficienta.\n", 59);
         return 1;
     }
 
-    // 2. Update product quantity.  Use a transaction for atomicity.
-    sqlite3_exec(db, "BEGIN TRANSACTION;", 0, 0, 0); // Start transaction.
+  
+    sqlite3_exec(db, "BEGIN TRANSACTION;", 0, 0, 0);
 
     snprintf(sql_query, sizeof(sql_query), "UPDATE Products SET quantity = quantity - %d WHERE id = %d;", quantity, product_ID);
-    rc = sqlite3_exec(db, sql_query, NULL, NULL, NULL);
-    if (rc != SQLITE_OK)
+    temp= sqlite3_exec(db, sql_query, NULL, NULL, NULL);
+    if (temp != SQLITE_OK)
     {
-        sqlite3_exec(db, "ROLLBACK TRANSACTION;", 0, 0, 0); // Rollback if UPDATE fails.
-        fprintf(stderr, "Error updating product quantity: %s\n", sqlite3_errmsg(db));
-        write(client_fd, "Error updating product quantity.\n", 31); // Send to client.
+        sqlite3_exec(db, "ROLLBACK TRANSACTION;", 0, 0, 0); //rollback just in case
+        fprintf(stderr, "eraore update cantitate noua: %s\n", sqlite3_errmsg(db));
+        write(client_fd, "Eroare la update cantitate noua.\n", 33);
         return 1;
     }
 
-    // 3. Record the transaction.
     snprintf(sql_query, sizeof(sql_query), "INSERT INTO Transactions (buyer_id, product_id, quantity) VALUES (%d, %d, %d);", buyer_ID, product_ID, quantity);
-    rc = sqlite3_exec(db, sql_query, NULL, NULL, NULL);
-    if (rc != SQLITE_OK)
-    {
-        sqlite3_exec(db, "ROLLBACK TRANSACTION;", 0, 0, 0); // Rollback if INSERT fails.
-        fprintf(stderr, "Error recording transaction: %s\n", sqlite3_errmsg(db));
-        write(client_fd, "Error recording transaction.\n", 27); // Send to client.
-        return 1;
-    }
-
-    sqlite3_exec(db, "COMMIT TRANSACTION;", 0, 0, 0); // Commit transaction if all successful.
-
-    write(client_fd, "Purchase successful.\n", 20); // Send success message to client.
+    temp = sqlite3_exec(db, sql_query, NULL, NULL, NULL);
+    sqlite3_exec(db, "COMMIT TRANSACTION;", 0, 0, 0); // commit tranzacite 
+    write(client_fd, "Produs cumparat cu succes!.\n", 28); 
     return 0;
 }
 
 bool processRequest(int client_fd)
 {
-
-    // Get or create ClientData for the client
-    if (client_data_storage[client_fd] == NULL) {
+    if (client_data_storage[client_fd] == NULL)
+    {
         client_data_storage[client_fd] = (ClientData *)calloc(1, sizeof(ClientData));
-        if (client_data_storage[client_fd] == NULL) {
-            perror("Memory allocation failed");
-            return true; // Indicate error and close connection.
-        }
     }
 
     ClientData *client_data = client_data_storage[client_fd];
-   
-    
+
     char buffer[256];
     memset(buffer, 0, sizeof(buffer));
 
@@ -482,12 +387,12 @@ bool processRequest(int client_fd)
     buffer[bytes] = '\0';
 
     // pt quit
-   if (strncmp(buffer, "QUIT", 4) == 0)
+    if (strncmp(buffer, "QUIT", 4) == 0)
     {
-        write(client_fd, "Disconnecting...\n", 17);
+        write(client_fd, "Deconectare...\n", 15);
         free(client_data_storage[client_fd]);
-        client_data_storage[client_fd] = NULL; // Free up storage
-        return true; // Disconnect client
+        client_data_storage[client_fd] = NULL; 
+        return true;                           
     }
     if (strncmp(buffer, "LOGOUT", 6) == 0)
     {
@@ -495,13 +400,13 @@ bool processRequest(int client_fd)
         {
             client_data->logged_in = false;
             client_data->user_id = -1;
-            write(client_fd, "User logged out\n", 16);
+            write(client_fd, "Utilizator delogat!\n", 20);
         }
         else
         {
-            write(client_fd, "Not logged in\n", 15);
+            write(client_fd, "Nu sunteti logat!\n", 18);
         }
-        return false; // Continue processing
+        return false; 
     }
     if (strncmp(buffer, "REGISTER", 8) == 0)
     {
@@ -518,21 +423,20 @@ bool processRequest(int client_fd)
 
         if (parsed != 2)
         {
-            write(client_fd, "Invalid LOGIN command format.\n", 31);
+            write(client_fd, "SINTAXA : LOGIN <username> <parola>\n", 36);
             return false;
         }
 
         if (client_data->logged_in == false)
         {
-            if (loginUser(username, password)) // Validate login
+            if (loginUser(username, password)) 
             {
-                // Prepare SQL statement
                 const char *query = "SELECT id FROM Users WHERE username = ?;";
                 sqlite3_stmt *stmt;
                 if (sqlite3_prepare_v2(db, query, -1, &stmt, NULL) != SQLITE_OK)
                 {
-                    write(client_fd, "Database error during user retrieval.\n", 39);
-                    return true; // disconnect or handle as needed
+                    write(client_fd, "EROARE DB.\n", 11);
+                    return true; 
                 }
 
                 sqlite3_bind_text(stmt, 1, username, -1, SQLITE_STATIC);
@@ -547,19 +451,19 @@ bool processRequest(int client_fd)
                 }
                 else
                 {
-                    write(client_fd, "User not found.\n", 16);
+                    write(client_fd, "Userul nu a fost gasit.\n", 24);
                 }
 
                 sqlite3_finalize(stmt);
             }
             else
             {
-                write(client_fd, "Invalid username or password.\n", 31);
+                write(client_fd, "Nume de utilizator sau parola incorecta\n", 40);
             }
         }
         else
         {
-            write(client_fd, "Already logged in.\n", 20);
+            write(client_fd, "Sunteti deja logat.\n", 20);
         }
     }
     else if (client_data->logged_in == true)
@@ -631,7 +535,7 @@ bool processRequest(int client_fd)
             int user_id;
             if (sscanf(buffer + 15, "%d", &user_id) != 1)
             {
-                write(client_fd, "Invalid command format. Use: MY_TRANSACTIONS <user_id>\n", 51);
+                write(client_fd, "Sintaxa incorecta, incercati :  MY_TRANSACTIONS <user_id>\n", 58);
             }
             myTransactions(user_id, client_fd);
         }
@@ -641,6 +545,10 @@ bool processRequest(int client_fd)
             int quantity, product_id, user_id;
             sscanf(buffer, "BUY_ITEM %s %d %d %d", product, &quantity, &product_id, &user_id);
             buyItem(product, quantity, product_id, user_id, client_fd);
+        }
+        else if (strncmp(buffer, "MENU", 4) == 0)
+        {
+            write(client_fd, "MENU", 5);
         }
         else
         {
@@ -660,13 +568,19 @@ void *treat(void *arg)
 {
     int client_fd = *((int *)arg); // castare la int - arg contine adresa unui client_fd
     free(arg);
+    pthread_mutex_lock(&mutex);
+    printf("Client conectat - descriptor : %d\n", client_fd);
+    pthread_mutex_unlock(&mutex);
+
     while (1)
     {
         if (processRequest(client_fd))
         {
+            pthread_mutex_lock(&mutex);
             printf("[server] S-a deconectat clientul cu descriptorul %d.\n", client_fd);
             fflush(stdout);
-            close(client_fd); // Închide conexiunea
+            pthread_mutex_unlock(&mutex);
+            close(client_fd); 
             break;
         }
     }
@@ -682,6 +596,7 @@ int main()
     int optval = 1; /* optiune folosita pentru setsockopt()*/
     int len;        /* lungimea structurii sockaddr_in */
     pthread_t thread_id;
+    pthread_mutex_init(&mutex,NULL);
 
     initDB();
     /* creare socket */
@@ -743,6 +658,6 @@ int main()
 
         pthread_detach(thread_id); // se elibereaza thread-ul automat
     }
-
+    pthread_mutex_destroy(&mutex);
     return 0;
 }
