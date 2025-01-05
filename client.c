@@ -16,9 +16,9 @@ int port;
 
 int main(int argc, char *argv[])
 {
-    int sd; // descriptorul de socket
+    int sd;                    // descriptorul de socket
     struct sockaddr_in server; // structura folosita pentru conectare
-    char msg[256]; // mesajul trimis
+    char msg[256];             // mesajul trimis
 
     /* exista toate argumentele in linia de comanda? */
     if (argc != 3)
@@ -51,6 +51,14 @@ int main(int argc, char *argv[])
         perror("[client] Eroare la connect().\n");
         return errno;
     }
+    printf("Bun Venit!\n");
+    fflush(stdout);
+    printf("Sintaxa utila\n ");
+    fflush(stdout);
+    printf("LOGIN <nume_utilizator> <parola>\n");
+    fflush(stdout);
+    printf("REGISTER <nume_utilizator> <parola>\n");
+    fflush(stdout);
 
     while (1)
     {
@@ -72,13 +80,87 @@ int main(int argc, char *argv[])
             perror("[client] Eroare la write() spre server.\n");
             return errno;
         }
-        bzero(msg,256);
+        bzero(msg, 256);
         /* citirea raspunsului dat de server (apel blocant pina cind serverul raspunde) */
         if (read(sd, msg, 256) < 0)
         {
             perror("[client] Eroare la read() de la server.\n");
             return errno;
         }
+        if (strncmp(msg, "Logare cu succes!", 17) == 0)
+        {
+            printf("[client] Logare cu succes! Optiuni disponibile:\n");
+            fflush(stdout);
+
+            printf("ADD_PRODUCT <nume> <pret> <id_vanzator> <locatie> <cantitate disponibila> <categorie>\n");
+            fflush(stdout);
+
+            printf("VIEW_PRODUCTS \n");
+            fflush(stdout);
+
+            printf("VIEW_DETAILS <nume_produs>\n");
+            fflush(stdout);
+
+            printf("DELETE_PRODUCT <nume_produs> <id_user>\n");
+            fflush(stdout);
+
+            printf("REQUEST_ID <username> <password>\n");
+            fflush(stdout);
+
+            printf("BUY_ITEM <nume_produs> <cantitate> <id_produs> <id_user>\n");
+            fflush(stdout);
+
+            printf("CATEGORY <nume_categorie>\n");
+            fflush(stdout);
+
+            printf("MY_TRANSACTIONS <id_user>\n");
+            fflush(stdout);
+
+            printf("MENU\n");
+            fflush(stdout);
+
+            printf("LOGOUT\n");
+            fflush(stdout);
+
+            printf("QUIT\n");
+            fflush(stdout);
+        }
+        else if(strncmp(msg, "MENU",4)==0)
+        {
+            printf("ADD_PRODUCT <nume> <pret> <id_vanzator> <locatie> <cantitate disponibila> <categorie>\n");
+            fflush(stdout);
+
+            printf("VIEW_PRODUCTS \n");
+            fflush(stdout);
+
+            printf("VIEW_DETAILS <nume_produs>\n");
+            fflush(stdout);
+
+            printf("DELETE_PRODUCT <nume_produs> <id_user>\n");
+            fflush(stdout);
+
+            printf("REQUEST_ID <username> <password>\n");
+            fflush(stdout);
+
+            printf("BUY_ITEM <nume_produs> <cantitate> <id_produs> <id_user>\n");
+            fflush(stdout);
+
+            printf("CATEGORY <nume_categorie>\n");
+            fflush(stdout);
+
+            printf("MY_TRANSACTIONS <id_user>\n");
+            fflush(stdout);
+
+            printf("MENU\n");
+            fflush(stdout);
+
+            printf("LOGOUT\n");
+            fflush(stdout);
+
+            printf("QUIT\n");
+            fflush(stdout);
+        }
+        else
 
         /* afisam mesajul primit */
         printf("[client] Mesajul primit este: %s\n", msg);
